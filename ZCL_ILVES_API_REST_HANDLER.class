@@ -1,0 +1,301 @@
+class ZCL_ILVES_API_REST_HANDLER definition
+  public
+  final
+  create public .
+
+public section.
+
+  types:
+    BEGIN OF ty_remove_forest_property_resp,
+        success TYPE abap_bool,
+      END OF ty_remove_forest_property_resp .
+  types:
+    BEGIN OF ty_remove_forest_property_req,
+        kitunnus TYPE zzkiid,
+        key   type string,
+      END OF ty_remove_forest_property_req .
+
+  methods CONSTRUCTOR
+    raising
+      ZCX_REST_HANDLER .
+  methods REMOVE_FOREST_PROPERTY_DATA
+    importing
+      !IV_KITUNNUS type ZZKIID
+    returning
+      value(RV_SUCCESS) type ABAP_BOOL
+    raising
+      ZCX_REST_HANDLER .
+  PROTECTED SECTION.
+private section.
+
+  data MR_HTTP_CLIENT type ref to IF_HTTP_CLIENT .
+  data MR_REST_CLIENT type ref to CL_REST_HTTP_CLIENT .
+
+  methods CREATE_HTTP_CLIENT
+    raising
+      ZCX_REST_HANDLER .
+  methods GET_BAPIRET2
+    returning
+      value(RS_RETURN) type BAPIRET2 .
+  methods RAISE_EXCEPTION
+    importing
+      !I_STRING type STRING optional
+    raising
+      ZCX_SIMPLE .
+  methods RAISE_EXC_FROM_STATUS_CODE
+    importing
+      !IV_STATUS_CODE type STRING
+    raising
+      ZCX_REST_HANDLER .
+ENDCLASS.
+
+
+
+CLASS ZCL_ILVES_API_REST_HANDLER IMPLEMENTATION.
+
+
+  METHOD constructor.
+    DATA: ls_return   TYPE bapiret2,
+          lv_errortxt TYPE string.
+
+*Create http Client object
+    TRY.
+        me->create_http_client( ).
+      CATCH zcx_rest_handler INTO DATA(lr_crm_rest_handler_exception).
+        RAISE EXCEPTION NEW zcx_rest_handler( previous = lr_crm_rest_handler_exception ).
+    ENDTRY.
+
+*Create REST Client object
+    TRY.
+        CREATE OBJECT me->mr_rest_client
+          EXPORTING
+            io_http_client = me->mr_http_client.
+
+      CATCH cx_rest_client_exception INTO DATA(lr_rest_exception).
+        RAISE EXCEPTION NEW zcx_rest_handler( previous = lr_rest_exception ).
+    ENDTRY.
+
+  ENDMETHOD.
+
+
+  METHOD create_http_client.
+***********************************************************************
+* Description     : Initialize instance of HTTP Client                *
+*                   and set its header fields                         *
+*                   Uses REST client to retrieve the data.            *
+*                                                                     *
+*                                                                     *
+***********************************************************************
+    CONSTANTS c_auth TYPE string VALUE 'Authorization' ##NO_TEXT.
+    CONSTANTS c_content_type TYPE string VALUE 'content-type'.
+    CONSTANTS c_accept TYPE string VALUE 'ACCEPT' ##NO_TEXT.
+    CONSTANTS c_application_json TYPE string VALUE 'application/json'.
+    CONSTANTS c_rfc_dest TYPE rfcdest VALUE 'ILVESAPI'.
+    CONSTANTS: gc_e TYPE dd26e-enqmode VALUE 'E'.
+
+    DATA: lv_reason        TYPE string,
+          lv_utc_timestamp TYPE timestampl,
+          ls_return        TYPE bapiret2.
+
+    DATA: lv_auth_val TYPE string.
+
+* TODO: Determine if we will create the client instance by destination or URL
+*Create the HTTP client instance
+*  CALL METHOD cl_http_client=>create_by_url
+*    EXPORTING
+*      url    = 'https://app01.tst.mfo.mgr.ads/ilves-api/servlet'
+**     proxy_host                 =
+**     proxy_service              =
+**     ssl_id =
+**     sap_username               =
+**     sap_client                 =
+**     proxy_user                 =
+**     proxy_passwd               =
+**     do_not_use_client_cert     = ABAP_FALSE
+**     use_scc                    = ABAP_FALSE
+**     scc_location_id            =
+**     oauth_profile              =
+**     oauth_config               =
+*    IMPORTING
+*      client = me->mr_http_client
+**    EXCEPTIONS
+**     argument_not_found         = 1
+**     plugin_not_active          = 2
+**     internal_error             = 3
+**     pse_not_found              = 4
+**     pse_not_distrib            = 5
+**     pse_errors                 = 6
+**     oa2c_set_token_error       = 7
+**     oa2c_missing_authorization = 8
+**     oa2c_invalid_config        = 9
+**     oa2c_invalid_parameters    = 10
+**     oa2c_invalid_scope         = 11
+**     oa2c_invalid_grant         = 12
+**     others = 13
+*    .
+*  IF sy-subrc <> 0.
+**   Implement suitable error handling here
+*  ENDIF.
+
+
+    CALL METHOD cl_http_client=>create_by_destination
+      EXPORTING
+        destination              = c_rfc_dest
+      IMPORTING
+        client                   = me->mr_http_client
+      EXCEPTIONS
+        destination_not_found    = 1
+        internal_error           = 2
+        argument_not_found       = 3
+        destination_no_authority = 4
+        plugin_not_active        = 5
+        OTHERS                   = 5.
+    IF sy-subrc NE 0.
+*      GET TIME STAMP FIELD lv_utc_timestamp. "if app log handle needed
+*      es_return = me->get_bapiret2( ).
+      RAISE EXCEPTION NEW zcx_rest_handler( textid = zcx_rest_handler=>http_client_creation_failed ).
+    ENDIF.
+
+*Set HTTP header fields
+    me->mr_http_client->request->set_header_field(
+      EXPORTING
+        name  = c_accept
+        value = c_application_json ).
+    me->mr_http_client->request->set_header_field(
+      EXPORTING
+        name  = c_content_type
+        value = c_application_json ).
+
+*  Set version
+    me->mr_http_client->request->set_version(
+      if_http_request=>co_protocol_version_1_1 ).
+
+  ENDMETHOD.
+
+
+  METHOD get_bapiret2.
+*Wrapper for syst messages
+    CALL FUNCTION 'BALW_BAPIRETURN_GET2'
+      EXPORTING
+        type   = syst-msgty
+        cl     = syst-msgid
+        number = syst-msgno
+        par1   = syst-msgv1
+        par2   = syst-msgv2
+        par3   = syst-msgv3
+        par4   = syst-msgv4
+      IMPORTING
+        return = rs_return.
+  ENDMETHOD.
+
+
+  METHOD raise_exception.
+    RAISE EXCEPTION TYPE zcx_simple
+      EXPORTING
+        text = i_string.
+
+  ENDMETHOD.
+
+
+  METHOD raise_exc_from_status_code.
+
+    CASE iv_status_code.
+      WHEN '400'.
+        RAISE EXCEPTION NEW zcx_rest_handler( textid = zcx_rest_handler=>bad_request ).
+      WHEN '401'.
+        RAISE EXCEPTION NEW zcx_rest_handler( textid = zcx_rest_handler=>unauthorized ).
+      WHEN '404'.
+        RAISE EXCEPTION NEW zcx_rest_handler( textid = zcx_rest_handler=>not_found ).
+      WHEN '500'.
+        RAISE EXCEPTION NEW zcx_rest_handler( textid = zcx_rest_handler=>internal_server_error ).
+    ENDCASE.
+  ENDMETHOD.
+
+
+  METHOD remove_forest_property_data.
+***********************************************************************
+* Class           : ZCL_ILVES_API_REST_HANDLER                        *
+* Package         : ZML_SHARED                                        *
+*                                                                     *
+***********************************************************************
+    DATA: lr_json   TYPE REF TO /ui2/cl_json,
+          lr_entity TYPE REF TO if_rest_entity.
+
+    DATA: lv_return          TYPE bapiret2,
+          lv_errortxt        TYPE string,
+          lv_uri             TYPE string,
+
+          ls_response_data   TYPE ty_remove_forest_property_resp,
+          ls_request_payload TYPE ty_remove_forest_property_req.
+
+    CHECK me->mr_http_client IS BOUND.
+    CHECK me->mr_rest_client IS BOUND.
+
+
+* Build URI
+    lv_uri = 'forestProperty/remove/?user=GDPRDataDeletionJBossSrvc'.
+
+    cl_http_utility=>set_request_uri(
+        EXPORTING
+          request = me->mr_http_client->request
+          uri     = lv_uri ).
+
+    ls_request_payload-kitunnus = iv_kitunnus.
+*Begin of change by SODOGAN-Set the Key
+    ls_request_payload-key = 'PnM7pZ4Pek'.
+
+* Convert data from ABAP dictionary stucture to JSON to pass as request payload
+    /ui2/cl_json=>serialize(
+      EXPORTING
+        data             =  ls_request_payload                " Data to serialize
+        pretty_name      = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
+      RECEIVING
+        r_json           = DATA(lv_payload_json)                 " JSON string
+    ).
+
+* Create rest entity
+    lr_entity = mr_rest_client->if_rest_client~create_request_entity( ).
+*Begin of change by SODOGAN-Set the API Key
+*    lr_entity->set_header_field( iv_name = 'user' iv_value = 'Vesuri_GDPR' ).
+*    lr_entity->set_header_field( iv_name = 'key' iv_value = 'fykQ5pLuAC2hbRGB' ).
+    lr_entity->set_content_type( iv_media_type = if_rest_media_type=>gc_appl_json ).
+    lr_entity->set_string_data( lv_payload_json ).
+
+* Call Request
+    TRY.
+        " POST request
+        me->mr_rest_client->if_rest_client~post( lr_entity ).
+        " Collect response
+        DATA(lo_response) = me->mr_rest_client->if_rest_client~get_response_entity( ).
+
+        DATA(lt_response_headers) = me->mr_rest_client->if_rest_client~get_response_headers( ).
+        DATA(lv_http_status) = lo_response->get_header_field( '~status_code' ).
+
+
+        "Receive the response data in JSON.
+        DATA(lv_string_data) = lo_response->get_string_data( ).
+
+        "request failed -> STOP Processing
+        IF lv_http_status NE 200.
+          me->raise_exc_from_status_code( lv_http_status ).
+        ENDIF.
+
+        " Parse the response into structure
+        IF lv_string_data IS NOT INITIAL.
+          /ui2/cl_json=>deserialize(
+            EXPORTING
+              json             = lv_string_data    " JSON string
+            CHANGING
+              data             = ls_response_data       " Data to serialize
+          ).
+          rv_success = ls_response_data-success.
+        ENDIF.
+*Close the connection
+        mr_rest_client->if_rest_client~close( ).
+        "exception handling
+      CATCH cx_rest_client_exception INTO DATA(lo_rest_client_excp).
+        RAISE EXCEPTION NEW zcx_rest_handler( previous = lo_rest_client_excp ).
+    ENDTRY.
+
+  ENDMETHOD.
+ENDCLASS.
