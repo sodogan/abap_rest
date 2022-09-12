@@ -1,211 +1,130 @@
-class ZCL_CRM_REST_HANDLER definition
-  public
-  final
-  create public .
-
-public section.
-
-  types:
-    BEGIN OF ty_customer_post_response,
-        customer TYPE string,
-      END OF ty_customer_post_response .
-
-  constants MC_CALLER_ID type STRING value 'callerId' ##NO_TEXT.
-  constants MC_USER_ID type STRING value 'userId' ##NO_TEXT.
-  constants MC_NAME type STRING value 'name' ##NO_TEXT.
-  constants MC_COMPANY_ID type STRING value 'companyId' ##NO_TEXT.
-  constants MC_PERSON_ID type STRING value 'personId' ##NO_TEXT.
-  constants MC_OFFSET type STRING value 'offset' ##NO_TEXT.
-  constants MC_LIMIT type STRING value 'limit' ##NO_TEXT.
-  constants MC_STATUS type STRING value 'status' ##NO_TEXT.
-  constants MC_CUSTOMER_CRM_ID type STRING value 'customerCRMId' ##NO_TEXT.
-  constants MC_CUSTOMER_SAP_ID type STRING value 'customerSAPId' ##NO_TEXT.
-
-  methods CONSTRUCTOR
-    raising
-      ZCX_CRM_REST_HANDLER .
-  methods GET_CRM_ACTIVITY
-    importing
-      !IS_ACTIVITY_GET_REQ type ZSMG_CRM_ACTIVITY_GET_REQ
-    returning
-      value(RS_ACTIVITY) type ZSMG_CRM_ACTIVITY
-    raising
-      ZCX_CRM_REST_HANDLER .
-  methods GET_LIST_CRM_ACTIVITY
-    importing
-      !IS_ACTIVITY_GET_LIST_REQ type ZSMG_CRM_ACTIVITY_GET_LIST_REQ
-    returning
-      value(RT_ACTIVITIES) type ZTTMG_CRM_ACTIVITY
-    raising
-      ZCX_CRM_REST_HANDLER .
-  methods SAVE_CRM_ACTIVITY
-    importing
-      !IS_ACTIVITY_SAVE_REQ type ZSMG_CRM_ACTIVITY_SAVE_REQ
-    returning
-      value(RV_RESPONSE) type STRING
-    raising
-      ZCX_CRM_REST_HANDLER .
-  methods GET_CRM_CUSTOMER
-    importing
-      !IS_CUSTOMER_GET_REQ type ZSMG_CRM_CUSTOMER_GET_REQ
-    returning
-      value(RS_CUSTOMER) type ZSMG_CRM_CUSTOMER
-    raising
-      ZCX_CRM_REST_HANDLER .
-  methods SAVE_CRM_CUSTOMER
-    importing
-      !IS_CUSTOMER_SAVE_REQ type ZSMG_CRM_CUSTOMER_SAVE_REQ
-    returning
-      value(RV_CUSTOMER) type STRING
-    raising
-      ZCX_CRM_REST_HANDLER .
-  methods GET_LIST_CRM_CUSTOMER
-    importing
-      !IS_CUSTOMER_GET_LIST_REQ type ZSMG_CRM_CUSTOMER_GET_LIST_REQ
-    returning
-      value(RT_CUSTOMERS) type ZTTMG_CRM_CUSTOMER
-    raising
-      ZCX_CRM_REST_HANDLER .
-  class-methods GET_MAPPING_ACTIVITY
-    returning
-      value(RT_MAPPING) type /UI2/CL_JSON=>NAME_MAPPINGS .
-  class-methods GET_MAPPING_CUSTOMER
-    returning
-      value(RT_MAPPING) type /UI2/CL_JSON=>NAME_MAPPINGS .
-protected section.
-private section.
-
-  data MR_HTTP_CLIENT type ref to IF_HTTP_CLIENT .
-  data MR_REST_CLIENT type ref to CL_REST_HTTP_CLIENT .
-
-  methods CREATE_HTTP_CLIENT
-    raising
-      ZCX_CRM_REST_HANDLER .
-  methods GET_BAPIRET2
-    returning
-      value(RS_RETURN) type BAPIRET2 .
-  methods RAISE_EXCEPTION
-    importing
-      !I_STRING type STRING optional
-    raising
-      ZCX_SIMPLE .
-  methods RAISE_EXC_FROM_STATUS_CODE
-    importing
-      !IV_STATUS_CODE type STRING
-    raising
-      ZCX_CRM_REST_HANDLER .
-ENDCLASS.
-
-
-
-CLASS ZCL_CRM_REST_HANDLER IMPLEMENTATION.
-
-
-  METHOD constructor.
-    DATA: ls_return   TYPE bapiret2,
-          lv_errortxt TYPE string.
-
-*Create http Client object
-    TRY.
-        me->create_http_client( ).
-      CATCH zcx_crm_rest_handler INTO DATA(lr_crm_rest_handler_exception).
-        RAISE EXCEPTION NEW zcx_crm_rest_handler( previous = lr_crm_rest_handler_exception ).
-    ENDTRY.
-
-*Create REST Client object
-    TRY.
-        CREATE OBJECT me->mr_rest_client
-          EXPORTING
-            io_http_client = me->mr_http_client.
-
-      CATCH cx_rest_client_exception INTO DATA(lr_rest_exception).
-        RAISE EXCEPTION NEW zcx_crm_rest_handler( previous = lr_rest_exception ).
-    ENDTRY.
-
-  ENDMETHOD.
-
-
-METHOD create_http_client.
 ***********************************************************************
 * Class           : ZCL_CRM_REST_HANDLER                              *
 * Package         : ZML_SHARED                                        *
 *                                                                     *
 * Author          : Michal Brulinski, Tieto                           *
 *                                                                     *
-* Description     : Initialize instance of HTTP Client                *
-*                   and set its header fields                         *
+* Description     : Part of AMDP ID1183, all CRM Activities           *
+*                   Build REST call to outside API                    *
 *                   Uses REST client to retrieve the data.            *
 *                                                                     *
 * Change history:                                                     *
 * Date       // Author                    // Description              *
 * ------------------------------------------------------------------- *
-* 28.04.2022 // Michal Brulinski, Tieto   // First version created    *
+* 05.05.2022 // Michal Brulinski, Tieto   // First version created    *
 *                                                                     *
 ***********************************************************************
-  CONSTANTS c_auth TYPE string VALUE 'Authorization' ##NO_TEXT.
-  CONSTANTS c_content_type TYPE string VALUE 'content-type'.
-  CONSTANTS c_accept TYPE string VALUE 'ACCEPT' ##NO_TEXT.
-  CONSTANTS c_application_json TYPE string VALUE 'application/json'.
-  CONSTANTS c_rfc_dest TYPE rfcdest VALUE 'TBD'. " TODO: RFC Destination still to be receieved; see MFORT-18178 https://jira.shared.tds.metsagroup.com/browse/MFORT-18178
-  CONSTANTS: gc_e TYPE dd26e-enqmode VALUE 'E'.
+CLASS zcl_crm_rest_handler DEFINITION
+  PUBLIC
+  CREATE PUBLIC  INHERITING FROM zcl_rest_handler_base.
 
-  DATA: lv_reason        TYPE string,
-        lv_utc_timestamp TYPE timestampl,
-        ls_return        TYPE bapiret2.
+  PUBLIC SECTION.
 
-  DATA: lv_auth_val TYPE string.
+    CONSTANTS c_subscription_id TYPE string VALUE 'APIM_CRM'.
 
-* TODO: Determine if we will create the client instance by destination or URL
-*Create the HTTP client instance
-  CALL METHOD cl_http_client=>create_by_destination
-    EXPORTING
-      destination              = c_rfc_dest
-    IMPORTING
-      client                   = me->mr_http_client
-    EXCEPTIONS
-      destination_not_found    = 1
-      internal_error           = 2
-      argument_not_found       = 3
-      destination_no_authority = 4
-      plugin_not_active        = 5
-      OTHERS                   = 5.
-  IF sy-subrc NE 0.
-*      GET TIME STAMP FIELD lv_utc_timestamp. "if app log handle needed
-*      es_return = me->get_bapiret2( ).
-    RAISE EXCEPTION NEW zcx_crm_rest_handler( textid = zcx_crm_rest_handler=>http_client_creation_failed ).
-  ENDIF.
+    CONSTANTS c_rfc_dest_CRM_GETACTIVITY TYPE rfcdest VALUE 'APIM_CRM_GETACTIVITY'.
+    CONSTANTS c_rfc_dest_CRM_GETACTIVITYLIST TYPE rfcdest VALUE 'APIM_CRM_GETACTIVITYLIST'.
+    CONSTANTS c_rfc_dest_CRM_GETCUSTOMER TYPE rfcdest VALUE 'APIM_CRM_GETCUSTOMER'.
+    CONSTANTS c_rfc_dest_CRM_GETCUSTOMERLIST TYPE rfcdest VALUE 'APIM_CRM_GETCUSTOMERLIST'.
+    CONSTANTS c_rfc_dest_CRM_SAVEACTIVITY TYPE rfcdest VALUE 'APIM_CRM_SAVEACTIVITY'.
+    CONSTANTS c_rfc_dest_CRM_SAVECUSTOMER TYPE rfcdest VALUE 'APIM_CRM_SAVECUSTOMER'.
 
-*Set HTTP header fields
-  me->mr_http_client->request->set_header_field(
-    EXPORTING
-      name  = c_accept
-      value = c_application_json ).
-  me->mr_http_client->request->set_header_field(
-    EXPORTING
-      name  = c_content_type
-      value = c_application_json ).
+    CONSTANTS mc_caller_id TYPE string VALUE 'callerId' ##NO_TEXT.
+    CONSTANTS mc_user_id TYPE string VALUE 'userId' ##NO_TEXT.
+    CONSTANTS mc_name TYPE string VALUE 'name' ##NO_TEXT.
+    CONSTANTS mc_company_id TYPE string VALUE 'companyId' ##NO_TEXT.
+    CONSTANTS mc_person_id TYPE string VALUE 'personId' ##NO_TEXT.
+    CONSTANTS mc_offset TYPE string VALUE 'offset' ##NO_TEXT.
+    CONSTANTS mc_limit TYPE string VALUE 'limit' ##NO_TEXT.
+    CONSTANTS mc_status TYPE string VALUE 'status' ##NO_TEXT.
+    CONSTANTS mc_customer_crm_id TYPE string VALUE 'customerCRMId' ##NO_TEXT.
+    CONSTANTS mc_customer_sap_id TYPE string VALUE 'customerSAPId' ##NO_TEXT.
 
-*  Set version
-  me->mr_http_client->request->set_version(
-    if_http_request=>co_protocol_version_1_1 ).
+    TYPES:
+      BEGIN OF ty_customer_post_response,
+        customer TYPE string,
+      END OF ty_customer_post_response .
 
-ENDMETHOD.
+    METHODS constructor
+      RAISING
+                zcx_rest_handler .
+
+    METHODS get_crm_activity
+      IMPORTING
+        !is_activity_get_req TYPE zsmg_crm_activity_get_req
+      RETURNING
+        VALUE(rs_activity)   TYPE zsmg_crm_activity
+      RAISING
+        zcx_rest_handler .
+    METHODS get_list_crm_activity
+      IMPORTING
+        !is_activity_get_list_req TYPE zsmg_crm_activity_get_list_req
+      RETURNING
+        VALUE(rt_activities)      TYPE zttmg_crm_activity
+      RAISING
+        zcx_rest_handler .
+    METHODS save_crm_activity
+      IMPORTING
+        !is_activity_save_req TYPE zsmg_crm_activity_save_req
+      RETURNING
+        VALUE(rv_response)    TYPE string
+      RAISING
+        zcx_rest_handler .
+    METHODS get_crm_customer
+      IMPORTING
+        !is_customer_get_req TYPE zsmg_crm_customer_get_req
+      RETURNING
+        VALUE(rs_customer)   TYPE zsmg_crm_customer
+      RAISING
+        zcx_rest_handler .
+    METHODS save_crm_customer
+      IMPORTING
+        !is_customer_save_req TYPE zsmg_crm_customer_save_req
+      RETURNING
+        VALUE(rv_customer)    TYPE string
+      RAISING
+        zcx_rest_handler .
+    METHODS get_list_crm_customer
+      IMPORTING
+        !is_customer_get_list_req TYPE zsmg_crm_customer_get_list_req
+      RETURNING
+        VALUE(rt_customers)       TYPE zttmg_crm_customer
+      RAISING
+        zcx_rest_handler .
+    CLASS-METHODS get_mapping_activity
+      RETURNING
+        VALUE(rt_mapping) TYPE /ui2/cl_json=>name_mappings .
+    CLASS-METHODS get_mapping_customer
+      RETURNING
+        VALUE(rt_mapping) TYPE /ui2/cl_json=>name_mappings .
+  PROTECTED SECTION.
+
+    METHODS set_http_header_fields REDEFINITION.
+    METHODS create_by_destination REDEFINITION.
+    METHODS: create_http_client REDEFINITION.
+    METHODS build_rest_client
+      IMPORTING rfc_destination TYPE c
+      RAISING
+                zcx_rest_handler.
+  PRIVATE SECTION.
 
 
-  method GET_BAPIRET2.
-*Wrapper for syst messages
-      CALL FUNCTION 'BALW_BAPIRETURN_GET2'
-        EXPORTING
-          type   = syst-msgty
-          cl     = syst-msgid
-          number = syst-msgno
-          par1   = syst-msgv1
-          par2   = syst-msgv2
-          par3   = syst-msgv3
-          par4   = syst-msgv4
-        IMPORTING
-          return = rs_return.
-  endmethod.
+ENDCLASS.
+
+
+
+CLASS zcl_crm_rest_handler IMPLEMENTATION.
+
+
+  METHOD constructor.
+    super->constructor( iv_subscription_id  = c_subscription_id ).
+** Call the init
+    init(  ).
+
+  ENDMETHOD.
+
+
+
 
 
   METHOD get_crm_activity.
@@ -234,6 +153,9 @@ ENDMETHOD.
 
     DATA: lv_uri TYPE string.
 
+**Build the HTTClient and the Rest for the RFC matching
+    build_rest_client( rfc_destination = c_rfc_dest_crm_getactivity ).
+
     " Build url based on request parameters
     CHECK me->mr_http_client IS BOUND.
     CHECK me->mr_rest_client IS BOUND.
@@ -242,11 +164,11 @@ ENDMETHOD.
 * Convert data from ABAP dictionary stucture to JSON to pass as request payload
     /ui2/cl_json=>serialize(
       EXPORTING
-        data             =  is_activity_get_req                " Data to serialize
-        pretty_name      = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
-        name_mappings    = zcl_crm_rest_handler=>get_mapping_activity( )                 " ABAP<->JSON Name Mapping Table
+        data          = is_activity_get_req                " Data to serialize
+        pretty_name   = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
+        name_mappings = zcl_crm_rest_handler=>get_mapping_activity( )                 " ABAP<->JSON Name Mapping Table
       RECEIVING
-        r_json           = DATA(lv_payload_json)                 " JSON string
+        r_json        = DATA(lv_payload_json)                 " JSON string
     ).
 
 * Create rest entity
@@ -261,14 +183,14 @@ ENDMETHOD.
         request = me->mr_http_client->request
         uri     = lv_uri ).
 
-    TRY.
+*    TRY.
         me->mr_rest_client->if_rest_client~post( lr_entity ).
         DATA(lo_response) = me->mr_rest_client->if_rest_client~get_response_entity( ).
         DATA(lv_http_status) = lo_response->get_header_field( '~status_code' ).
 
         "request failed -> STOP Processing
         IF lv_http_status NE 200.
-          me->raise_exc_from_status_code( lv_http_status ).
+          zcx_rest_handler=>raise_exc_from_status_code( lv_http_status ).
         ENDIF.
 
         "Receive the response data in JSON.
@@ -279,25 +201,25 @@ ENDMETHOD.
         ENDIF.
 
         "exception handling
-      CATCH cx_rest_client_exception INTO DATA(lo_rest_client_excp).
-        RAISE EXCEPTION NEW zcx_crm_rest_handler( previous = lo_rest_client_excp ).
-    ENDTRY.
+*      CATCH cx_rest_client_exception INTO DATA(lo_rest_client_excp).
+*        RAISE EXCEPTION NEW zcx_rest_handler( previous = lo_rest_client_excp ).
+*    ENDTRY.
 
     " Parse the response into structure
     IF lv_string_data IS NOT INITIAL.
       /ui2/cl_json=>deserialize(
         EXPORTING
-          json             = lv_string_data                 " JSON string
-          pretty_name      = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
-          name_mappings    = zcl_crm_rest_handler=>get_mapping_activity( )                 " ABAP<->JSON Name Mapping Table
+          json          = lv_string_data                 " JSON string
+          pretty_name   = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
+          name_mappings = zcl_crm_rest_handler=>get_mapping_activity( )                 " ABAP<->JSON Name Mapping Table
         CHANGING
-          data             = rs_activity       " Data to serialize
+          data          = rs_activity       " Data to serialize
       ).
     ENDIF.
   ENDMETHOD.
 
 
-  method GET_CRM_CUSTOMER.
+  METHOD get_crm_customer.
 ***********************************************************************
 * Class           : ZCL_CRM_REST_HANDLER                              *
 * Package         : ZML_SHARED                                        *
@@ -314,14 +236,17 @@ ENDMETHOD.
 * 28.04.2022 // Michal Brulinski, Tieto   // First version created    *
 *                                                                     *
 ***********************************************************************
-    DATA: lr_json TYPE REF TO /ui2/cl_json,
+    DATA: lr_json   TYPE REF TO /ui2/cl_json,
           lr_entity TYPE REF TO if_rest_entity.
 
-    DATA: lv_return   TYPE bapiret2,
+    DATA: lv_return       TYPE bapiret2,
           ls_crm_customer TYPE zsmg_crm_customer,
-          lv_errortxt TYPE string.
+          lv_errortxt     TYPE string.
 
     DATA: lv_uri TYPE string.
+
+**Build the HTTClient and the Rest for the RFC matching
+    build_rest_client( rfc_destination = c_rfc_dest_crm_getcustomer ).
 
     " Build url based on request parameters
     "lv_uri = |callerId={ is_customer_get_req-caller_id },customerCRMId={ is_customer_get_req-crm_id },customerSAPId={ is_customer_get_req-sap_id }|.
@@ -336,12 +261,12 @@ ENDMETHOD.
     " For example: CUSTOMER_CRM_ID would be => customerCrmId, but we want customerCRMId
     /ui2/cl_json=>serialize(
       EXPORTING
-        data             =  is_customer_get_req                " Data to serialize
-        pretty_name      = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
-        name_mappings    = me->get_mapping_customer( )                  " ABAP<->JSON Name Mapping Table
-*        conversion_exits =                  " Use DDIC conversion exits on serialize of values
+        data          = is_customer_get_req                " Data to serialize
+        pretty_name   = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
+        name_mappings = me->get_mapping_customer( )                  " ABAP<->JSON Name Mapping Table
+*       conversion_exits =                  " Use DDIC conversion exits on serialize of values
       RECEIVING
-        r_json           = DATA(lv_payload_json)                 " JSON string
+        r_json        = DATA(lv_payload_json)                 " JSON string
     ).
 
 * Create rest entity
@@ -355,7 +280,7 @@ ENDMETHOD.
         request = me->mr_http_client->request
         uri     = lv_uri ).
 
-    TRY.
+*    TRY.
         me->mr_rest_client->if_rest_client~post( lr_entity ).
         DATA(lo_response) = me->mr_rest_client->if_rest_client~get_response_entity( ).
         DATA(lv_http_status) = lo_response->get_header_field( '~status_code' ).
@@ -364,7 +289,7 @@ ENDMETHOD.
         IF lv_http_status NE 200.
 *          DATA(lv_reason) = lo_response->get_header_field( '~status_reason' ).
 *          lv_errortxt = lv_reason.
-          me->raise_exc_from_status_code( lv_http_status ).
+          zcx_rest_handler=>raise_exc_from_status_code( lv_http_status ).
         ENDIF.
 
         "Receive the response data in JSON.
@@ -375,27 +300,27 @@ ENDMETHOD.
         ENDIF.
 
         "Exception handling
-      CATCH cx_rest_client_exception INTO DATA(lo_rest_client_excp).
-        "lv_errortxt = lo_rest_client_excp->get_longtext( ).
-        RAISE EXCEPTION NEW zcx_crm_rest_handler( previous = lo_rest_client_excp ).
-    ENDTRY.
+*      CATCH cx_rest_client_exception INTO DATA(lo_rest_client_excp).
+*        "lv_errortxt = lo_rest_client_excp->get_longtext( ).
+*        RAISE EXCEPTION NEW zcx_rest_handler( previous = lo_rest_client_excp ).
+*    ENDTRY.
 
     " Parse the response into structure
     IF lv_string_data IS NOT INITIAL.
       /ui2/cl_json=>deserialize(
         EXPORTING
-          json             = lv_string_data                 " JSON string
-          pretty_name      = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
-          name_mappings    = me->get_mapping_customer( )                  " ABAP<->JSON Name Mapping Table
+          json          = lv_string_data                 " JSON string
+          pretty_name   = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
+          name_mappings = me->get_mapping_customer( )                  " ABAP<->JSON Name Mapping Table
         CHANGING
-          data             = rs_customer       " Data to serialize
+          data          = rs_customer       " Data to serialize
       ).
     ENDIF.
 
-  endmethod.
+  ENDMETHOD.
 
 
-  method GET_LIST_CRM_ACTIVITY.
+  METHOD get_list_crm_activity.
 ***********************************************************************
 * Class           : ZCL_CRM_REST_HANDLER                              *
 * Package         : ZML_SHARED                                        *
@@ -412,14 +337,18 @@ ENDMETHOD.
 * 24.05.2022 // Michal Brulinski, Tieto   // First version created    *
 *                                                                     *
 ***********************************************************************
-    DATA: lr_json TYPE REF TO /ui2/cl_json,
+    DATA: lr_json   TYPE REF TO /ui2/cl_json,
           lr_entity TYPE REF TO if_rest_entity.
 
-    DATA: lv_return   TYPE bapiret2,
+    DATA: lv_return       TYPE bapiret2,
           ls_crm_activity TYPE zsmg_crm_activity,
-          lv_errortxt TYPE string.
+          lv_errortxt     TYPE string.
 
     DATA: lv_uri TYPE string.
+
+
+**Build the HTTClient and the Rest for the RFC matching
+    build_rest_client( rfc_destination = c_rfc_dest_crm_getactivitylist ).
 
     " Build url based on request parameters
     CHECK me->mr_http_client IS BOUND.
@@ -429,11 +358,11 @@ ENDMETHOD.
 * Convert data from ABAP dictionary stucture to JSON to pass as request payload
     /ui2/cl_json=>serialize(
       EXPORTING
-        data             =  is_activity_get_list_req                " Data to serialize
-        pretty_name      = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
-        name_mappings    = zcl_crm_rest_handler=>get_mapping_activity( )                 " ABAP<->JSON Name Mapping Table
+        data          = is_activity_get_list_req                " Data to serialize
+        pretty_name   = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
+        name_mappings = zcl_crm_rest_handler=>get_mapping_activity( )                 " ABAP<->JSON Name Mapping Table
       RECEIVING
-        r_json           = DATA(lv_payload_json)                 " JSON string
+        r_json        = DATA(lv_payload_json)                 " JSON string
     ).
 
 * Create rest entity
@@ -448,14 +377,14 @@ ENDMETHOD.
         request = me->mr_http_client->request
         uri     = lv_uri ).
 
-    TRY.
+*    TRY.
         me->mr_rest_client->if_rest_client~post( lr_entity ).
         DATA(lo_response) = me->mr_rest_client->if_rest_client~get_response_entity( ).
         DATA(lv_http_status) = lo_response->get_header_field( '~status_code' ).
 
         "request failed -> STOP Processing
         IF lv_http_status NE 200.
-          me->raise_exc_from_status_code( lv_http_status ).
+          zcx_rest_handler=>raise_exc_from_status_code( lv_http_status ).
         ENDIF.
 
         "Receive the response data in JSON.
@@ -466,25 +395,25 @@ ENDMETHOD.
         ENDIF.
 
         "exception handling
-      CATCH cx_rest_client_exception INTO DATA(lo_rest_client_excp).
-        RAISE EXCEPTION NEW zcx_crm_rest_handler( previous = lo_rest_client_excp ).
-    ENDTRY.
+*      CATCH cx_rest_client_exception INTO DATA(lo_rest_client_excp).
+*        RAISE EXCEPTION NEW zcx_rest_handler( previous = lo_rest_client_excp ).
+*    ENDTRY.
 
     " Parse the response into structure
     IF lv_string_data IS NOT INITIAL.
       /ui2/cl_json=>deserialize(
         EXPORTING
-          json             = lv_string_data                 " JSON string
-          pretty_name      = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
-          name_mappings    = zcl_crm_rest_handler=>get_mapping_activity( )                 " ABAP<->JSON Name Mapping Table
+          json          = lv_string_data                 " JSON string
+          pretty_name   = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
+          name_mappings = zcl_crm_rest_handler=>get_mapping_activity( )                 " ABAP<->JSON Name Mapping Table
         CHANGING
-          data             = rt_activities       " Data to serialize
+          data          = rt_activities       " Data to serialize
       ).
     ENDIF.
-  endmethod.
+  ENDMETHOD.
 
 
-  method GET_LIST_CRM_CUSTOMER.
+  METHOD get_list_crm_customer.
 ***********************************************************************
 * Class           : ZCL_CRM_REST_HANDLER                              *
 * Package         : ZML_SHARED                                        *
@@ -501,15 +430,18 @@ ENDMETHOD.
 * 28.04.2022 // Michal Brulinski, Tieto   // First version created    *
 *                                                                     *
 ***********************************************************************
-    DATA: lr_json TYPE REF TO /ui2/cl_json,
+    DATA: lr_json   TYPE REF TO /ui2/cl_json,
           lr_entity TYPE REF TO if_rest_entity.
 
-    DATA: lv_return   TYPE bapiret2,
-          ls_crm_customer TYPE zsmg_crm_customer,
+    DATA: lv_return        TYPE bapiret2,
+          ls_crm_customer  TYPE zsmg_crm_customer,
           lt_crm_customers TYPE zttmg_crm_customer,
-          lv_errortxt TYPE string.
+          lv_errortxt      TYPE string.
 
     DATA: lv_uri TYPE string.
+
+**Build the HTTClient and the Rest for the RFC matching
+    build_rest_client( rfc_destination = c_rfc_dest_crm_getcustomerlist ).
 
     " Build url based on request parameters
     "lv_uri = |callerId={ is_customer_get_list_req-caller_id },customerCRMId={ is_customer_get_req-crm_id },customerSAPId={ is_customer_get_req-sap_id }|.
@@ -521,11 +453,11 @@ ENDMETHOD.
 * Convert data from ABAP dictionary stucture to JSON to pass as request payload
     /ui2/cl_json=>serialize(
       EXPORTING
-        data             =  is_customer_get_list_req                " Data to serialize
-        pretty_name      = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
-        name_mappings    = me->get_mapping_customer( )                  " ABAP<->JSON Name Mapping Table
+        data          = is_customer_get_list_req                " Data to serialize
+        pretty_name   = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
+        name_mappings = me->get_mapping_customer( )                  " ABAP<->JSON Name Mapping Table
       RECEIVING
-        r_json           = DATA(lv_payload_json)                 " JSON string
+        r_json        = DATA(lv_payload_json)                 " JSON string
     ).
 
 * Create rest entity
@@ -539,14 +471,14 @@ ENDMETHOD.
         request = me->mr_http_client->request
         uri     = lv_uri ).
 
-    TRY.
+*    TRY.
         me->mr_rest_client->if_rest_client~post( lr_entity ).
         DATA(lo_response) = me->mr_rest_client->if_rest_client~get_response_entity( ).
         DATA(lv_http_status) = lo_response->get_header_field( '~status_code' ).
 
         "request failed -> STOP Processing
         IF lv_http_status NE 200.
-          me->raise_exc_from_status_code( lv_http_status ).
+          zcx_rest_handler=>raise_exc_from_status_code( lv_http_status ).
         ENDIF.
 
         "Receive the response data in JSON.
@@ -557,25 +489,26 @@ ENDMETHOD.
         ENDIF.
 
         "exception handling
-      CATCH cx_rest_client_exception INTO DATA(lo_rest_client_excp).
-        RAISE EXCEPTION NEW zcx_crm_rest_handler( previous = lo_rest_client_excp ).
-    ENDTRY.
+*      CATCH cx_rest_client_exception INTO DATA(lo_rest_client_excp).
+*        RAISE EXCEPTION NEW zcx_rest_handler( previous = lo_rest_client_excp ).
+*
+*    ENDTRY.
 
     " Parse the response into structure
     IF lv_string_data IS NOT INITIAL.
       /ui2/cl_json=>deserialize(
         EXPORTING
-          json             = lv_string_data                 " JSON string
-          pretty_name      = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
-          name_mappings    = me->get_mapping_customer( )                  " ABAP<->JSON Name Mapping Table
+          json          = lv_string_data                 " JSON string
+          pretty_name   = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
+          name_mappings = me->get_mapping_customer( )                  " ABAP<->JSON Name Mapping Table
         CHANGING
-          data             = rt_customers       " Data to serialize
+          data          = rt_customers       " Data to serialize
       ).
     ENDIF.
-  endmethod.
+  ENDMETHOD.
 
 
-  METHOD GET_MAPPING_ACTIVITY.
+  METHOD get_mapping_activity.
 
     rt_mapping = VALUE #(
                           " Activity Get Req
@@ -639,30 +572,12 @@ ENDMETHOD.
   ENDMETHOD.
 
 
-  METHOD RAISE_EXCEPTION.
-    RAISE EXCEPTION TYPE zcx_simple
-      EXPORTING
-        text     = i_string.
-
-  ENDMETHOD.
 
 
-  METHOD raise_exc_from_status_code.
-
-    CASE iv_status_code.
-      WHEN '400'.
-        RAISE EXCEPTION NEW zcx_crm_rest_handler( textid = zcx_crm_rest_handler=>bad_request ).
-      WHEN '401'.
-        RAISE EXCEPTION NEW zcx_crm_rest_handler( textid = zcx_crm_rest_handler=>unauthorized ).
-      WHEN '404'.
-        RAISE EXCEPTION NEW zcx_crm_rest_handler( textid = zcx_crm_rest_handler=>not_found ).
-      WHEN '500'.
-        RAISE EXCEPTION NEW zcx_crm_rest_handler( textid = zcx_crm_rest_handler=>internal_server_error ).
-    ENDCASE.
-  ENDMETHOD.
 
 
-  method SAVE_CRM_ACTIVITY.
+
+  METHOD save_crm_activity.
 ***********************************************************************
 * Class           : ZCL_CRM_REST_HANDLER                              *
 * Package         : ZML_SHARED                                        *
@@ -688,12 +603,14 @@ ENDMETHOD.
           lv_errortxt     TYPE string,
           lv_uri          TYPE string.
 
-          "ls_response_data     TYPE ty_activity_post_response.
+    "ls_response_data     TYPE ty_activity_post_response.
 
     " Build url based on request parameters
     CHECK me->mr_http_client IS BOUND.
     CHECK me->mr_rest_client IS BOUND.
 
+**Build the HTTClient and the Rest for the RFC matching
+    build_rest_client( rfc_destination = c_rfc_dest_crm_saveactivity ).
 
 * Build URI
 
@@ -708,11 +625,11 @@ ENDMETHOD.
 * Convert data from ABAP dictionary stucture to JSON to pass as request payload
     /ui2/cl_json=>serialize(
       EXPORTING
-        data             =  is_activity_save_req                " Data to serialize
-        pretty_name      = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
-        name_mappings    = zcl_crm_rest_handler=>get_mapping_activity( )                 " ABAP<->JSON Name Mapping Table
+        data          = is_activity_save_req                " Data to serialize
+        pretty_name   = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
+        name_mappings = zcl_crm_rest_handler=>get_mapping_activity( )                 " ABAP<->JSON Name Mapping Table
       RECEIVING
-        r_json           = DATA(lv_payload_json)                 " JSON string
+        r_json        = DATA(lv_payload_json)                 " JSON string
     ).
 
 * Create rest entity
@@ -721,7 +638,7 @@ ENDMETHOD.
     lr_entity->set_string_data( lv_payload_json ).
 
 * Call Request
-    TRY.
+*    TRY.
         " POST request
         me->mr_rest_client->if_rest_client~post( lr_entity ).
         " Collect response
@@ -730,17 +647,17 @@ ENDMETHOD.
 
         "request failed -> STOP Processing
         IF lv_http_status NE 200.
-          me->raise_exc_from_status_code( lv_http_status ).
+          zcx_rest_handler=>raise_exc_from_status_code( lv_http_status ).
         ENDIF.
         "Receive the response data
         DATA(lv_string_data) = lo_response->get_string_data( ).
         rv_response = lv_string_data.
 
         "exception handling
-      CATCH cx_rest_client_exception INTO DATA(lo_rest_client_excp).
-        RAISE EXCEPTION NEW zcx_crm_rest_handler( previous = lo_rest_client_excp ).
-    ENDTRY.
-  endmethod.
+*      CATCH cx_rest_client_exception INTO DATA(lo_rest_client_excp).
+*        RAISE EXCEPTION NEW zcx_rest_handler( previous = lo_rest_client_excp ).
+*    ENDTRY.
+  ENDMETHOD.
 
 
   METHOD save_crm_customer.
@@ -764,14 +681,20 @@ ENDMETHOD.
     DATA: lr_json   TYPE REF TO /ui2/cl_json,
           lr_entity TYPE REF TO if_rest_entity.
 
-    DATA: lv_return       TYPE bapiret2,
-          ls_crm_customer TYPE zsmg_crm_customer,
-          lv_errortxt     TYPE string,
-          lv_uri          TYPE string,
+    DATA: lv_return        TYPE bapiret2,
+          ls_crm_customer  TYPE zsmg_crm_customer,
+          lv_errortxt      TYPE string,
+          lv_uri           TYPE string,
 
-          ls_response_data     TYPE ty_customer_post_response.
+          ls_response_data TYPE ty_customer_post_response.
+
+
+**Build the HTTClient and the Rest for the RFC matching
+    build_rest_client( rfc_destination = c_rfc_dest_crm_savecustomer ).
 
     " Build url based on request parameters
+
+
     "lv_uri = |callerId={ is_customer_get_req-caller_id },customerCRMId={ is_customer_get_req-crm_id },customerSAPId={ is_customer_get_req-sap_id }|.
     CHECK me->mr_http_client IS BOUND.
     CHECK me->mr_rest_client IS BOUND.
@@ -790,11 +713,11 @@ ENDMETHOD.
 * Convert data from ABAP dictionary stucture to JSON to pass as request payload
     /ui2/cl_json=>serialize(
       EXPORTING
-        data             =  is_customer_save_req                " Data to serialize
-        pretty_name      = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
-        name_mappings    = me->get_mapping_customer( )                  " ABAP<->JSON Name Mapping Table
+        data          = is_customer_save_req                " Data to serialize
+        pretty_name   = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
+        name_mappings = me->get_mapping_customer( )                  " ABAP<->JSON Name Mapping Table
       RECEIVING
-        r_json           = DATA(lv_payload_json)                 " JSON string
+        r_json        = DATA(lv_payload_json)                 " JSON string
     ).
 
 * Create rest entity
@@ -803,7 +726,7 @@ ENDMETHOD.
     lr_entity->set_string_data( lv_payload_json ).
 
 * Call Request
-    TRY.
+*    TRY.
         " POST request
         me->mr_rest_client->if_rest_client~post( lr_entity ).
         " Collect response
@@ -812,7 +735,7 @@ ENDMETHOD.
 
         "request failed -> STOP Processing
         IF lv_http_status NE 200.
-          me->raise_exc_from_status_code( lv_http_status ).
+          zcx_rest_handler=>raise_exc_from_status_code( lv_http_status ).
         ENDIF.
         "Receive the response data in JSON.
         DATA(lv_string_data) = lo_response->get_string_data( ).
@@ -820,19 +743,47 @@ ENDMETHOD.
         IF lv_string_data IS NOT INITIAL.
           /ui2/cl_json=>deserialize(
             EXPORTING
-              json             = lv_string_data    " JSON string
-              pretty_name      = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
-              name_mappings    = me->get_mapping_customer( )                  " ABAP<->JSON Name Mapping Table
+              json          = lv_string_data    " JSON string
+              pretty_name   = /ui2/cl_json=>pretty_mode-camel_case                 " Pretty Print property names
+              name_mappings = me->get_mapping_customer( )                  " ABAP<->JSON Name Mapping Table
             CHANGING
-              data             = ls_response_data       " Data to serialize
+              data          = ls_response_data       " Data to serialize
           ).
           rv_customer = ls_response_data-customer.
         ENDIF.
 
         "exception handling
-      CATCH cx_rest_client_exception INTO DATA(lo_rest_client_excp).
-        RAISE EXCEPTION NEW zcx_crm_rest_handler( previous = lo_rest_client_excp ).
-    ENDTRY.
+*      CATCH cx_rest_client_exception INTO DATA(lo_rest_client_excp).
+*         MESSAGE lo_rest_client_excp  TYPE 'E' DISPLAY LIKE 'E'.
+**        RAISE EXCEPTION NEW zcx_rest_handler( previous = lo_rest_client_excp ).
+*        RAISE EXCEPTION NEW zcx_rest_handler( previous = lo_rest_client_excp ).
+*    ENDTRY.
 
   ENDMETHOD.
+
+  METHOD set_http_header_fields.
+    super->set_http_header_fields( ).
+  ENDMETHOD.
+
+
+  METHOD create_by_destination.
+    super->create_by_destination( rfc_destination = rfc_destination ).
+  ENDMETHOD.
+
+  METHOD create_http_client.
+**Not needed here as the httpclient will be created in each method
+  ENDMETHOD.
+
+  METHOD build_rest_client.
+**Each method will be first calling this to create http client, header fields and rest client
+**Build the HTTClient and the Rest
+    create_by_destination( rfc_destination = rfc_destination ).
+
+** Set the http fields
+    set_http_header_fields( ).
+
+**create the client
+    create_rest_client( http_client = mr_http_client ).
+  ENDMETHOD.
+
 ENDCLASS.
